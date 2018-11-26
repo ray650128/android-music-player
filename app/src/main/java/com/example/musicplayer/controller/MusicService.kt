@@ -1,4 +1,4 @@
-package com.example.musicplayer
+package com.example.musicplayer.controller
 
 import android.app.*
 import android.content.ContentUris
@@ -12,6 +12,11 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.support.annotation.RequiresApi
 import android.util.Log
+import com.example.musicplayer.R
+import com.example.musicplayer.model.Song
+import com.example.musicplayer.model.SongList
+import com.example.musicplayer.view.MainActivity
+import com.example.musicplayer.view.PlaylistAdapter
 import java.util.*
 
 class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnErrorListener,
@@ -22,7 +27,7 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
     //song list
     private lateinit var songs: ArrayList<Song>
     //current position
-    private var songPosn: Int = 0
+    //private var songPosn: Int = 0
     //binder
     private val musicBind = LocalBinder()
     //title of current song
@@ -37,7 +42,7 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
         //create the service
         super.onCreate()
         //initialize position
-        songPosn = 0
+        //songPosn = 0
         //random
         rand = Random()
         //create player
@@ -54,7 +59,7 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
         //set player properties
         player.setWakeMode(applicationContext,
                 PowerManager.PARTIAL_WAKE_LOCK)
-        player.setAudioStreamType(AudioManager.STREAM_MUSIC)
+        //player.setAudioStreamType(AudioManager.STREAM_MUSIC)
         //set listeners
         player.setOnPreparedListener(this)
         player.setOnCompletionListener(this)
@@ -71,11 +76,11 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
         //play
         player.reset()
         //get song
-        val playSong = songs[songPosn]
+        val playSong = songs[SongList.currentPosition]
         //get title
-        songTitle = playSong.getTitle()
+        songTitle = playSong.title
         //get id
-        val currSong = playSong.getID()
+        val currSong = playSong.id
         //set uri
         val trackUri = ContentUris.withAppendedId(
                 android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
@@ -88,25 +93,21 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
         }
 
         player.prepareAsync()
+
+        NoticeCenter.instance.notifyDataChanged("Update Position")
     }
 
     //set the song
     fun setSong(songIndex: Int) {
-        songPosn = songIndex
+        SongList.currentPosition = songIndex
     }
 
     //playback methods
-    fun getPosn(): Int {
-        return player.currentPosition
-    }
+    fun getPosn(): Int = player.currentPosition
 
-    fun getDur(): Int {
-        return player.duration
-    }
+    fun getDur(): Int = player.duration
 
-    fun isPng(): Boolean {
-        return player.isPlaying
-    }
+    fun isPng(): Boolean = player.isPlaying
 
     fun pausePlayer() {
         player.pause()
@@ -122,23 +123,24 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
 
     //skip to previous track
     fun playPrev() {
-        songPosn--
-        if (songPosn < 0) songPosn = songs.size - 1
+        SongList.currentPosition--
+        if (SongList.currentPosition < 0) SongList.currentPosition = songs.size - 1
         playSong()
     }
 
     //skip to next
     fun playNext() {
         if (shuffle) {
-            var newSong = songPosn
-            while (newSong == songPosn) {
+            var newSong = SongList.currentPosition
+            while (newSong == SongList.currentPosition) {
                 newSong = rand!!.nextInt(songs.size)
             }
-            songPosn = newSong
+            SongList.currentPosition = newSong
         } else {
-            songPosn++
-            if (songPosn >= songs.size) songPosn = 0
+            SongList.currentPosition++
+            if (SongList.currentPosition >= songs.size) SongList.currentPosition = 0
         }
+
         playSong()
     }
 
@@ -149,9 +151,6 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
 
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onPrepared(mp: MediaPlayer?) {
-        val NOTIF_ID = "com.example.musicplayer"
-        val NOTIF_NAME = "com.example.musicplayer.notifyController"
-        val NOTIF_DESC = "com.example.musicplayer.notificationPlaybackController"
 
         //start playback
         mp!!.start()
@@ -161,11 +160,7 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
         val pendInt = PendingIntent.getActivity(this, 0,
                 notIntent, PendingIntent.FLAG_UPDATE_CURRENT)
 
-        val builder: Notification.Builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Notification.Builder(this, NOTIF_ID)
-        } else {
-            Notification.Builder(this)
-        }
+        val builder: Notification.Builder = Notification.Builder(this, NOTIFICATION_ID)
 
         builder.setContentIntent(pendInt)
                 .setSmallIcon(R.drawable.ic_play_arrow)
@@ -178,13 +173,12 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val notifyManager = this.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val notifyChannel = NotificationChannel(NOTIF_ID, NOTIF_NAME, NotificationManager.IMPORTANCE_DEFAULT)
-            notifyChannel.description = NOTIF_DESC
+            val notifyChannel = NotificationChannel(NOTIFICATION_ID, NOTIFICATION_NAME, NotificationManager.IMPORTANCE_DEFAULT)
+            notifyChannel.description = NOTIFICATION_DESC
             // Disable Light, Vibration, Sound when notification start.
             notifyChannel.enableLights(false)
             notifyChannel.enableVibration(false)
             notifyChannel.setSound(null, null)
-            assert(notifyManager != null)
             notifyManager.createNotificationChannel(notifyChannel)
         }
 
@@ -192,16 +186,17 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
     }
 
     override fun onError(mp: MediaPlayer?, what: Int, extra: Int): Boolean {
-        TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+        mp?.reset()
+        return false
     }
 
     override fun onCompletion(mp: MediaPlayer?) {
-        TODO("not implemented") //To change body of created functions use File | Settings | File Templates.
+        if (mp!!.currentPosition > 0) {
+            playNext()
+        }
     }
 
-    override fun onBind(intent: Intent): IBinder? {
-        return musicBind
-    }
+    override fun onBind(intent: Intent): IBinder? = musicBind
 
     override fun onUnbind(intent: Intent): Boolean {
         player.stop()
@@ -211,8 +206,14 @@ class MusicService : Service(), MediaPlayer.OnPreparedListener, MediaPlayer.OnEr
 
     //binder
     inner class LocalBinder : Binder() {
-        fun getService() : MusicService? {
+        fun getService(): MusicService? {
             return this@MusicService
         }
+    }
+
+    companion object {
+        const val NOTIFICATION_ID = "com.example.musicplayer"
+        const val NOTIFICATION_NAME = "com.example.musicplayer.notifyController"
+        const val NOTIFICATION_DESC = "com.example.musicplayer.notificationPlaybackController"
     }
 }
